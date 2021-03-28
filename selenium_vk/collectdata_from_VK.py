@@ -22,12 +22,12 @@ def get_date(param):
         param = f'{current_date.day - 1}.{current_date.month}.{current_date.year}-{result[-1]}'
     return param
 
-
+# получение прямых ссылок на изображения в посте
 def get_image_links(element):
     return ['https:'+img.split(':')[-1].replace('url("', '').replace('")', '')
             for img in element.get_attribute('style').split(';') if 'url(' in img][0]
 
-
+# поэлементная обработка постов
 def get_item_dictionary(elements):
     item = dict()
     for element in elements:
@@ -58,7 +58,7 @@ current_collection = db['posts']
 url = parse.urljoin(base_url, group_id)
 driver = webdriver.Edge()
 driver.get(url)
-
+# переход на страницу поиска, кнопка поиска закрыта баннером
 search_button = driver.find_element_by_class_name('ui_tab_search').get_attribute('href')
 driver.get(parse.urljoin(base_url, search_button))
 search_input = driver.find_element_by_id('wall_search')
@@ -66,6 +66,7 @@ search_input.send_keys(search_value)
 search_input.send_keys(Keys.ENTER)
 
 while True:
+    # если вдруг появится окно запроса регистрации
     try:
         notnow = driver.find_element_by_class_name('JoinForm__notNow')
         if notnow:
@@ -74,9 +75,11 @@ while True:
         print(e)
     finally:
         driver.find_element_by_tag_name("html").send_keys(Keys.END)
+        # ожидание обновления скрытого элемента загрузки доп элементов
         time.sleep(1)
         button = driver.find_element_by_id('fw_load_more')
         style = button.get_attribute('style')
+        # display: none; - критерий конца прокрутки
         if 'none' in style:
             break
 
