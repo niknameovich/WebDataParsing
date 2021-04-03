@@ -11,8 +11,8 @@
 
 BOT_NAME = 'instaparser'
 
-SPIDER_MODULES = ['instaparser.spiders']
-NEWSPIDER_MODULE = 'instaparser.spiders'
+SPIDER_MODULES = ['spiders']
+NEWSPIDER_MODULE = 'spiders'
 
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
@@ -67,7 +67,7 @@ DOWNLOAD_DELAY = 1.25
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 ITEM_PIPELINES = {
-   'instaparser.pipelines.InstaparserPipeline': 300,
+   'pipelines.InstaparserPipeline': 300,
 }
 
 # Enable and configure the AutoThrottle extension (disabled by default)

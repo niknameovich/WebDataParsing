@@ -14,16 +14,17 @@ class InstagramSpider(scrapy.Spider):
     start_urls = ['https://www.instagram.com/']
     username = "forexample613"
     enc_password = "#PWD_INSTAGRAM_BROWSER:9:1617462283:AVdQAFZ/MmfIEgl0nhZtvrj7WU5TAx71Z+8UqwF0szpoWGlLRkYFFBInSg7r" \
-                   "/RTRuJPZcFD28KWqtqXHM9ZXyvNai5euAc4o5NihWr1tz61cR8rfxI83Kaqgn7WoLDuSLO4RylzgoR83UybC "
+                   "/RTRuJPZcFD28KWqtqXHM9ZXyvNai5euAc4o5NihWr1tz61cR8rfxI83Kaqgn7WoLDuSLO4RylzgoR83UybC"
     login_url = "https://www.instagram.com/accounts/login/ajax/"
 
     graphql_url = 'https://www.instagram.com/graphql/query/?'
     followers_hash = '5aefa9893005572d237da5068082d8d5'
-    followed_hash = '3dec7e2c57367ef3da3d987d89f9dbc'
+    followed_hash = '3dec7e2c57367ef3da3d987d89f9dbc8'
 
-    def __init__(self, logins: list):
-        self.user_to_parse = logins
-        super(InstagramSpider).__init__(self)
+    def __init__(self, *args, **kwargs):
+        self.followed_id = list()
+        self.user_to_parse = kwargs['user']
+        super().__init__(self.name)
 
     def parse(self, response: HtmlResponse):
         yield scrapy.FormRequest(
@@ -47,21 +48,53 @@ class InstagramSpider(scrapy.Spider):
 
     def user_data_parse(self, response: HtmlResponse, username):
         user_id = self.fetch_user_id(response.text, username)
-        variables = {"id": user_id, 'include_reel': True, 'fetch_mutual': False, "first": 24}
+        variables = {"id": user_id, 'include_reel': 'true', 'fetch_mutual': 'true', "first": 24}
         # сравните с оригинальной строкой из запроса от сайта
-        str_variables = quote(str(variables).replace(" ", "").replace("'", '"'))
+        # str_variables = quote(str(variables).replace(" ", "").replace("'", '"'))
         # вручную упаковываем variables в нужный формат строки
-        # str_variables = self.make_variables_string(variables)
-        url = self.graphql_url + f"query_hash={self.followers_hash}&variables={str_variables}"
+        str_variables = self.make_variables_string(variables)
+        img = response.xpath('//img[@data-testid="user-avatar"]/@src').extract_first()
+
+        # вставка в БД профиля исследумого пользователя
+        item = InstaparserItem(
+            _id=user_id,
+            followed=list(),
+            photo= img,
+            username= username,
+            link=response.url
+        )
+        yield item
+
+        # сбор подписчиков
+        url1 = self.graphql_url + f"query_hash={self.followers_hash}&variables={str_variables}"
         yield response.follow(
-            url,
-            callback=self.parse_posts,
+            url1,
+            callback=self.parse_data,
             cb_kwargs={
                 "username": username,
                 "user_id": user_id,
-                "variables": deepcopy(variables)
+                "variables": deepcopy(variables),
+                "edge_tag_name": "edge_followed_by",
+                "mode": True
             },
         )
+
+        # сбор подписок
+        variables['fetch_mutual'] = 'false'
+        str_variables = self.make_variables_string(variables)
+        url2 = self.graphql_url + f"query_hash={self.followed_hash}&variables={str_variables}"
+        yield response.follow(
+            url2,
+            callback=self.parse_data,
+            cb_kwargs={
+                "username": username,
+                "user_id": user_id,
+                "variables": deepcopy(variables),
+                "edge_tag_name": "edge_follow",
+                "mode": False
+            },
+        )
+
 
     def make_variables_string(self, variables):
         # хардкод для кодирования словаря как в запросе Instagram
@@ -84,9 +117,9 @@ class InstagramSpider(scrapy.Spider):
         s = [open_parenthesis] + s + [close_parenthesis]
         return "".join(s)
 
-    def parse_followers(self, response: HtmlResponse, username, user_id, variables):
+    def parse_data(self, response: HtmlResponse, username, user_id, variables, edge_tag_name, mode):
         data = response.json()
-        data = data["data"]["user"]["edge_owner_to_timeline_media"]
+        data = data["data"]["user"][edge_tag_name]
         page_info = data.get("page_info", None)
         if page_info["has_next_page"]:
             variables["after"] = page_info["end_cursor"]
@@ -95,26 +128,41 @@ class InstagramSpider(scrapy.Spider):
             str_variables = quote(str(variables).replace(" ", "").replace("'", '"'))
             # вручную упаковываем variables в нужный формат строки
             # str_variables = self.make_variables_string(variables)
-            url = self.graphql_url + f"query_hash={self.followers_hash}&variables={str_variables}"
+            url = f"{self.graphql_url}query_hash={self.followers_hash if mode else self.followed_hash}" \
+                  f"&variables={str_variables} "
             yield response.follow(
                 url,
-                callback=self.parse_followers,
+                callback=self.parse_data,
                 cb_kwargs={
                     "username": username,
                     "user_id": user_id,
-                    "variables": deepcopy(variables)
+                    "variables": deepcopy(variables),
+                    "edge_tag_name": edge_tag_name,
+                    "mode": mode
                 }
             )
 
-        posts = data["edges"]
-        for post in posts:
-            tmp = post["node"]
-            item = InstaparserItem(
-                user_id=user_id,
-                photo=tmp["display_url"],
-                likes=tmp["edge_media_preview_like"]["count"],
-                post_data=tmp
-            )
+        items = data["edges"]
+        for item in items:
+            tmp = item["node"]
+            if not mode:
+                # присвоение полю фолловер значения ИД исследуемого пользователя
+                item = InstaparserItem(
+                    _id=tmp['id'],
+                    photo=tmp["profile_pic_url"],
+                    username=tmp["username"],
+                    link=f'{self.start_urls[0]}{tmp["username"]}'
+                )
+                item['follower'] = user_id
+            else:
+                item = InstaparserItem(
+                    _id=tmp['id'],
+                    followed=user_id,
+                    photo=tmp["profile_pic_url"],
+                    username=tmp["username"],
+                    link=f'{self.start_urls[0]}{tmp["username"]}'
+                )
+
             yield item
 
     # Получаем токен для авторизации
